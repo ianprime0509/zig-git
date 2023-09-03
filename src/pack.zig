@@ -159,6 +159,7 @@ pub fn indexPack(allocator: mem.Allocator, pack: anytype, index_writer: anytype)
     }
 
     var oids = std.ArrayListUnmanaged(Oid){};
+    defer oids.deinit(allocator);
     try oids.ensureTotalCapacityPrecise(allocator, index_entries.count());
     var index_entries_iter = index_entries.iterator();
     while (index_entries_iter.next()) |entry| {
@@ -242,9 +243,7 @@ fn indexPackFirstPass(
                 var entry_decompress_stream = try std.compress.zlib.decompressStream(allocator, entry_crc32_reader.reader());
                 defer entry_decompress_stream.deinit();
                 var entry_counting_reader = std.io.countingReader(entry_decompress_stream.reader());
-                var entry_content = std.ArrayListUnmanaged(u8){};
-                defer entry_content.deinit(allocator);
-                var entry_hashed_writer = hashedWriter(entry_content.writer(allocator), Sha1.init(.{}));
+                var entry_hashed_writer = hashedWriter(std.io.null_writer, Sha1.init(.{}));
                 const entry_writer = entry_hashed_writer.writer();
                 // The object header is not included in the pack data but is
                 // part of the object's ID
@@ -262,6 +261,7 @@ fn indexPackFirstPass(
             },
             inline .ofs_delta, .ref_delta => |delta| {
                 var entry_decompress_stream = try std.compress.zlib.decompressStream(allocator, entry_crc32_reader.reader());
+                defer entry_decompress_stream.deinit();
                 var entry_counting_reader = std.io.countingReader(entry_decompress_stream.reader());
                 var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
                 try fifo.pump(entry_counting_reader.reader(), std.io.null_writer);
