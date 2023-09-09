@@ -1,6 +1,8 @@
 const std = @import("std");
+const git = @import("git.zig");
 const pack = @import("pack.zig");
 const protocol = @import("protocol.zig");
+const Odb = @import("odb.zig").Odb;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -37,12 +39,16 @@ pub fn main() !void {
 
     // try output_file.sync();
 
-    var pack_file = try std.fs.cwd().openFile("download.pack", .{});
+    var pack_file = try std.fs.cwd().openFile("xml.pack", .{});
     defer pack_file.close();
-    var index_file = try std.fs.cwd().createFile("download.idx.new", .{});
+    var index_file = try std.fs.cwd().openFile("xml.idx", .{});
     defer index_file.close();
-    var index_buffered_writer = std.io.bufferedWriter(index_file.writer());
-    try pack.indexPack(allocator, pack_file, index_buffered_writer.writer());
-    try index_buffered_writer.flush();
-    try index_file.sync();
+    var odb = try Odb(std.fs.File).init(pack_file, index_file);
+    const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
+    const entry = try odb.seekEntry(oid);
+    std.debug.print("{}\n", .{entry});
+    var entry_stream = try std.compress.zlib.decompressStream(allocator, odb.pack_file.reader());
+    defer entry_stream.deinit();
+    var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
+    try fifo.pump(entry_stream.reader(), std.io.getStdOut().writer());
 }

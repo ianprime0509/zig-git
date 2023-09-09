@@ -2,9 +2,8 @@
 const std = @import("std");
 const mem = std.mem;
 const Sha1 = std.crypto.hash.Sha1;
-
-pub const object_name_length = Sha1.digest_length;
-pub const Oid = [object_name_length]u8;
+const git = @import("git.zig");
+const Oid = git.Oid;
 
 pub const PackHeader = struct {
     total_objects: u32,
@@ -87,7 +86,7 @@ pub const EntryHeader = union(Type) {
                 .uncompressed_length = uncompressed_length,
             } },
             .ref_delta => .{ .ref_delta = .{
-                .base_object = reader.readBytesNoEof(object_name_length) catch |e| switch (e) {
+                .base_object = reader.readBytesNoEof(git.object_name_length) catch |e| switch (e) {
                     error.EndOfStream => return error.InvalidFormat,
                     else => |other| return other,
                 },
@@ -127,6 +126,21 @@ pub const IndexHeader = struct {
 
     pub const signature = "\xFFtOc";
     pub const supported_version = 2;
+    pub const size = 4 + 4 + @sizeOf([256]u32);
+
+    pub fn read(reader: anytype) !IndexHeader {
+        var header_bytes = try reader.readBytesNoEof(size);
+        if (!mem.eql(u8, header_bytes[0..4], signature)) return error.InvalidHeader;
+        const version = mem.readIntBig(u32, header_bytes[4..8]);
+        if (version != supported_version) return error.UnsupportedVersion;
+        const fan_out_table_slice: *[256]u32 = @alignCast(@ptrCast(header_bytes[8..]));
+        if (@import("builtin").cpu.arch.endian() != .Big) {
+            for (fan_out_table_slice) |*entry| {
+                entry.* = @byteSwap(entry.*);
+            }
+        }
+        return .{ .fan_out_table = fan_out_table_slice.* };
+    }
 };
 
 const IndexEntry = struct {
