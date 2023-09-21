@@ -44,11 +44,10 @@ pub fn main() !void {
     var index_file = try std.fs.cwd().openFile("xml.idx", .{});
     defer index_file.close();
     var odb = try Odb(std.fs.File).init(pack_file, index_file);
-    const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
-    const entry = try odb.seekEntry(oid);
-    std.debug.print("{}\n", .{entry});
-    var entry_stream = try std.compress.zlib.decompressStream(allocator, odb.pack_file.reader());
-    defer entry_stream.deinit();
-    var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
-    try fifo.pump(entry_stream.reader(), std.io.getStdOut().writer());
+    //const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
+    const oid = try git.parseOid("8d7c3b43f6ea0e0f54a74841d9f628d1c9f973df");
+    try odb.seekOid(oid);
+    var object = try odb.readObject(allocator);
+    defer object.deinit(allocator);
+    std.debug.print("{s} {}\n", .{ @tagName(object.type), std.fmt.fmtSliceEscapeUpper(object.data) });
 }

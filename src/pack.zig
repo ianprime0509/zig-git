@@ -96,7 +96,7 @@ pub const EntryHeader = union(Type) {
     }
 };
 
-fn readSizeVarInt(r: anytype) !u64 {
+pub fn readSizeVarInt(r: anytype) !u64 {
     const Byte = packed struct { value: u7, has_next: bool };
     var b: Byte = @bitCast(try r.readByte());
     var value: u64 = b.value;
@@ -109,7 +109,7 @@ fn readSizeVarInt(r: anytype) !u64 {
     return value;
 }
 
-fn readOffsetVarInt(r: anytype) !u64 {
+pub fn readOffsetVarInt(r: anytype) !u64 {
     const Byte = packed struct { value: u7, has_next: bool };
     var b: Byte = @bitCast(try r.readByte());
     var value: u64 = b.value;
@@ -351,7 +351,10 @@ fn indexPackHashDelta(
         var entry_decompress_stream = try std.compress.zlib.decompressStream(allocator, entry_buffered_reader.reader());
         defer entry_decompress_stream.deinit();
         var base_object = std.io.fixedBufferStream(previous_entry.items);
-        try expandDelta(&base_object, entry_decompress_stream.reader(), current_entry.writer(allocator));
+        const entry_reader = entry_decompress_stream.reader();
+        _ = try readSizeVarInt(entry_reader); // base object size
+        _ = try readSizeVarInt(entry_reader); // expanded object size
+        try expandDelta(&base_object, entry_reader, current_entry.writer(allocator));
 
         mem.swap(std.ArrayListUnmanaged(u8), &previous_entry, &current_entry);
     }
@@ -364,8 +367,6 @@ fn indexPackHashDelta(
 }
 
 pub fn expandDelta(base_object: anytype, delta_reader: anytype, writer: anytype) !void {
-    _ = try readSizeVarInt(delta_reader); // base object size
-    _ = try readSizeVarInt(delta_reader); // expanded object size
     while (true) {
         const inst: packed struct { value: u7, copy: bool } = @bitCast(delta_reader.readByte() catch |e| switch (e) {
             error.EndOfStream => return,
