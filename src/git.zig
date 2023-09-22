@@ -6,6 +6,15 @@ pub const object_name_length = Sha1.digest_length;
 pub const fmt_object_name_length = 2 * object_name_length;
 pub const Oid = [object_name_length]u8;
 
+pub fn isOid(s: []const u8) bool {
+    return s.len == fmt_object_name_length and for (s) |c| {
+        switch (c) {
+            '0'...'9', 'a'...'f' => {},
+            else => break false,
+        }
+    } else true;
+}
+
 pub fn parseOid(s: []const u8) !Oid {
     if (s.len != fmt_object_name_length) return error.InvalidOid;
     var oid: Oid = undefined;

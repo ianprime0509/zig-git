@@ -55,38 +55,85 @@ pub const Packet = union(enum) {
 
 pub const Client = struct {
     // TODO: transport abstraction
-    allocator: mem.Allocator,
     transport: std.http.Client,
 
-    pub fn init(allocator: mem.Allocator) Client {
-        return .{
-            .allocator = allocator,
-            .transport = .{ .allocator = allocator },
-        };
-    }
+    // TODO: this is appropriate if this gets integrated into Zig, but not for a standalone library
+    pub const standard_agent = "zig/" ++ @import("builtin").zig_version_string;
 
     pub fn deinit(client: *Client) void {
         client.transport.deinit();
         client.* = undefined;
     }
 
-    pub fn fetch(client: *Client, git_uri: std.Uri, wants: []const []const u8) !FetchStream {
+    pub fn getCapabilities(client: *Client, allocator: mem.Allocator, git_uri: std.Uri) !CapabilityIterator {
+        var info_refs_uri = git_uri;
+        info_refs_uri.path = try std.fs.path.resolvePosix(allocator, &.{ "/", git_uri.path, "info/refs" });
+        defer allocator.free(info_refs_uri.path);
+        info_refs_uri.query = "service=git-upload-pack";
+        info_refs_uri.fragment = null;
+
+        var headers = std.http.Headers.init(allocator);
+        defer headers.deinit();
+        try headers.append("Git-Protocol", "version=2");
+
+        var request = try client.transport.request(.GET, info_refs_uri, headers, .{});
+        errdefer request.deinit();
+        try request.start();
+        try request.finish();
+
+        try request.wait();
+
+        const reader = request.reader();
+        var buf: [max_pkt_line_data]u8 = undefined;
+        // TODO: do all Git servers include this first comment-like response? I can't find it documented anywhere.
+        switch (try Packet.read(reader, &buf)) {
+            .data => |data| if (!mem.eql(u8, data, "# service=git-upload-pack\n")) return error.UnsupportedProtocol,
+            else => return error.UnexpectedPacket,
+        }
+        switch (try Packet.read(reader, &buf)) {
+            .flush => {},
+            else => return error.UnexpectedPacket,
+        }
+        switch (try Packet.read(reader, &buf)) {
+            .data => |data| if (!mem.eql(u8, data, "version 2\n")) return error.UnsupportedProtocol,
+            else => return error.UnexpectedPacket,
+        }
+        return .{ .request = request };
+    }
+
+    pub const FetchOptions = struct {
+        agent: ?[]const u8 = null,
+    };
+
+    pub fn fetch(
+        client: *Client,
+        allocator: mem.Allocator,
+        git_uri: std.Uri,
+        wants: []const []const u8,
+        options: FetchOptions,
+    ) !FetchStream {
         var fetch_uri = git_uri;
-        fetch_uri.path = try std.fs.path.resolvePosix(client.allocator, &.{ "/", git_uri.path, "git-upload-pack" });
-        defer client.allocator.free(fetch_uri.path);
+        fetch_uri.path = try std.fs.path.resolvePosix(allocator, &.{ "/", git_uri.path, "git-upload-pack" });
+        defer allocator.free(fetch_uri.path);
         fetch_uri.query = null;
         fetch_uri.fragment = null;
 
-        var headers = std.http.Headers.init(client.allocator);
+        var headers = std.http.Headers.init(allocator);
         defer headers.deinit();
         try headers.append("Content-Type", "application/x-git-upload-pack-request");
         try headers.append("Git-Protocol", "version=2");
 
         var body = std.ArrayListUnmanaged(u8){};
-        defer body.deinit(client.allocator);
-        const body_writer = body.writer(client.allocator);
+        defer body.deinit(allocator);
+        const body_writer = body.writer(allocator);
         try Packet.write(.{ .data = "command=fetch\n" }, body_writer);
+        if (options.agent) |agent| {
+            const agent_packet = try std.fmt.allocPrint(allocator, "agent={s}\n", .{agent});
+            defer allocator.free(agent_packet);
+            try Packet.write(.{ .data = agent_packet }, body_writer);
+        }
         try Packet.write(.delimiter, body_writer);
+        try Packet.write(.{ .data = "ofs-delta\n" }, body_writer);
         for (wants) |want| {
             var buf: [max_pkt_line_data]u8 = undefined;
             const arg = std.fmt.bufPrint(&buf, "want {s}\n", .{want}) catch unreachable;
@@ -126,6 +173,34 @@ pub const Client = struct {
             }
         }
     }
+
+    pub const CapabilityIterator = struct {
+        request: std.http.Client.Request,
+        buf: [max_pkt_line_data]u8 = undefined,
+
+        pub const Capability = struct {
+            key: []const u8,
+            value: ?[]const u8 = null,
+        };
+
+        pub fn deinit(iterator: *CapabilityIterator) void {
+            iterator.request.deinit();
+        }
+
+        pub fn next(iterator: *CapabilityIterator) !?Capability {
+            switch (try Packet.read(iterator.request.reader(), &iterator.buf)) {
+                .flush => return null,
+                .data => |data| if (data.len > 0 and data[data.len - 1] == '\n') {
+                    if (mem.indexOfScalar(u8, data, '=')) |separator_pos| {
+                        return .{ .key = data[0..separator_pos], .value = data[separator_pos + 1 .. data.len - 1] };
+                    } else {
+                        return .{ .key = data[0 .. data.len - 1] };
+                    }
+                } else return error.UnexpectedPacket,
+                else => return error.UnexpectedPacket,
+            }
+        }
+    };
 
     pub const FetchStream = struct {
         request: std.http.Client.Request,

@@ -40,20 +40,28 @@ pub fn main() !void {
 
     // try output_file.sync();
 
-    var pack_file = try std.fs.cwd().openFile("xml.pack", .{});
-    defer pack_file.close();
-    var index_file = try std.fs.cwd().openFile("xml.idx", .{});
-    defer index_file.close();
-    var odb = try Odb.init(pack_file, index_file);
-    const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
+    // var pack_file = try std.fs.cwd().openFile("xml.pack", .{});
+    // defer pack_file.close();
+    // var index_file = try std.fs.cwd().openFile("xml.idx", .{});
+    // defer index_file.close();
+    // var odb = try Odb.init(pack_file, index_file);
+    // const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
     //const oid = try git.parseOid("8d7c3b43f6ea0e0f54a74841d9f628d1c9f973df");
     // try odb.seekOid(oid);
     // var object = try odb.readObject(allocator);
     // defer object.deinit(allocator);
     // std.debug.print("{s} {}\n", .{ @tagName(object.type), std.fmt.fmtSliceEscapeUpper(object.data) });
 
-    var repository = Repository{ .odb = odb };
+    // var repository = Repository{ .odb = odb };
+    // var worktree = try std.fs.cwd().makeOpenPath("worktree", .{});
+    // defer worktree.close();
+    // try repository.checkout(allocator, worktree, oid);
+
     var worktree = try std.fs.cwd().makeOpenPath("worktree", .{});
     defer worktree.close();
-    try repository.checkout(allocator, worktree, oid);
+    const git_uri = std.Uri.parse("https://github.com/ianprime0509/zig-xml") catch unreachable;
+    try Repository.clone(allocator, git_uri, worktree, .{
+        .depth = 1,
+        .ref = "dfdc044f3271641c7d428dc8ec8cd46423d8b8b6",
+    });
 }

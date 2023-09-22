@@ -3,10 +3,102 @@ const mem = std.mem;
 const git = @import("git.zig");
 const Oid = git.Oid;
 const Odb = @import("Odb.zig");
+const pack = @import("pack.zig");
+const protocol = @import("protocol.zig");
 
 odb: Odb,
 
 const Repository = @This();
+
+pub const CloneOptions = struct {
+    /// The commit depth to clone. 0 means clone all history.
+    depth: u32 = 0,
+    /// The ref to clone. null means the default branch.
+    ref: ?[]const u8 = null,
+};
+
+/// Clones a repository.
+///
+/// Note: this function is very rudimentary. It only supports single-branch
+/// clones over HTTP(S).
+pub fn clone(allocator: mem.Allocator, uri: std.Uri, dir: std.fs.Dir, options: CloneOptions) !void {
+    var transport = std.http.Client{ .allocator = allocator };
+    defer transport.deinit();
+    var client = protocol.Client{ .transport = transport };
+
+    var supports_agent = false;
+    var supports_shallow = false;
+    {
+        var capability_iterator = try client.getCapabilities(allocator, uri);
+        defer capability_iterator.deinit();
+        while (try capability_iterator.next()) |capability| {
+            if (mem.eql(u8, capability.key, "agent")) {
+                supports_agent = true;
+            } else if (mem.eql(u8, capability.key, "fetch")) {
+                var feature_iterator = mem.splitScalar(u8, capability.value orelse continue, ' ');
+                while (feature_iterator.next()) |feature| {
+                    if (mem.eql(u8, feature, "shallow")) {
+                        supports_shallow = true;
+                    }
+                }
+            }
+        }
+    }
+
+    const want_oid = want_oid: {
+        if (options.ref) |ref| {
+            if (git.isOid(ref)) break :want_oid ref;
+        }
+        @panic("TODO: discover matching refs from remote");
+    };
+
+    var pack_dir = pack_dir: {
+        const pack_dir_path = try std.fs.path.join(allocator, &.{ ".git", "objects", "pack" });
+        defer allocator.free(pack_dir_path);
+        break :pack_dir try dir.makeOpenPath(pack_dir_path, .{});
+    };
+    defer pack_dir.close();
+    const pack_file_stem = pack_file_stem: {
+        const pack_hash = pack_hash: {
+            var pack_file = try pack_dir.createFile("tmp.pack", .{ .read = true });
+            defer pack_file.close();
+            var fetch_stream = try client.fetch(allocator, uri, &.{want_oid}, .{
+                .agent = if (supports_agent) protocol.Client.standard_agent else null,
+            });
+            defer fetch_stream.deinit();
+            var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
+            try fifo.pump(fetch_stream.reader(), pack_file.writer());
+            try pack_file.sync();
+            try pack_file.seekFromEnd(-git.object_name_length);
+            const pack_hash = try pack_file.reader().readBytesNoEof(git.object_name_length);
+            break :pack_hash try std.fmt.allocPrint(allocator, "{}", .{std.fmt.fmtSliceHexLower(&pack_hash)});
+        };
+        defer allocator.free(pack_hash);
+
+        break :pack_file_stem try std.fmt.allocPrint(allocator, "pack-{s}", .{pack_hash});
+    };
+    defer allocator.free(pack_file_stem);
+    const pack_file_name = try std.fmt.allocPrint(allocator, "{s}.pack", .{pack_file_stem});
+    defer allocator.free(pack_file_name);
+    try pack_dir.rename("tmp.pack", pack_file_name);
+    var pack_file = try pack_dir.openFile(pack_file_name, .{});
+    defer pack_file.close();
+
+    const index_file_name = try std.fmt.allocPrint(allocator, "{s}.idx", .{pack_file_stem});
+    defer allocator.free(index_file_name);
+    var index_file = try pack_dir.createFile(index_file_name, .{ .read = true });
+    defer index_file.close();
+    var index_buffered_writer = std.io.bufferedWriter(index_file.writer());
+    try pack.indexPack(allocator, pack_file, index_buffered_writer.writer());
+    try index_buffered_writer.flush();
+    try index_file.sync();
+
+    try pack_file.seekTo(0);
+    try index_file.seekTo(0);
+    var odb = try Odb.init(pack_file, index_file);
+    var repository = Repository{ .odb = odb };
+    try repository.checkout(allocator, dir, try git.parseOid(want_oid));
+}
 
 pub fn checkout(repository: *Repository, allocator: mem.Allocator, worktree: std.fs.Dir, commit_oid: Oid) !void {
     try repository.odb.seekOid(commit_oid);
