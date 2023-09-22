@@ -1,3 +1,5 @@
+// TODO: clean up returned errors and specify error sets explicitly for pub fns
+// TODO: clean up overall module structure
 const std = @import("std");
 const mem = std.mem;
 const Sha1 = std.crypto.hash.Sha1;

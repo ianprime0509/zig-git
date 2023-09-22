@@ -1,4 +1,3 @@
-// TODO: clean up errors
 const std = @import("std");
 const mem = std.mem;
 const Sha1 = std.crypto.hash.Sha1;

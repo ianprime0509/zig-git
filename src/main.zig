@@ -62,6 +62,6 @@ pub fn main() !void {
     const git_uri = std.Uri.parse("https://github.com/ianprime0509/zig-xml") catch unreachable;
     try Repository.clone(allocator, git_uri, worktree, .{
         .depth = 1,
-        .ref = "dfdc044f3271641c7d428dc8ec8cd46423d8b8b6",
+        .ref = "perf/tracy",
     });
 }

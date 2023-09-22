@@ -13,8 +13,8 @@ const Repository = @This();
 pub const CloneOptions = struct {
     /// The commit depth to clone. 0 means clone all history.
     depth: u32 = 0,
-    /// The ref to clone. null means the default branch.
-    ref: ?[]const u8 = null,
+    /// The ref to clone.
+    ref: []const u8 = "HEAD",
 };
 
 /// Clones a repository.
@@ -46,10 +46,27 @@ pub fn clone(allocator: mem.Allocator, uri: std.Uri, dir: std.fs.Dir, options: C
     }
 
     const want_oid = want_oid: {
-        if (options.ref) |ref| {
-            if (git.isOid(ref)) break :want_oid ref;
+        if (git.parseOid(options.ref)) |oid| break :want_oid oid else |_| {}
+
+        const ref_head = try std.fmt.allocPrint(allocator, "refs/heads/{s}", .{options.ref});
+        defer allocator.free(ref_head);
+        const ref_tag = try std.fmt.allocPrint(allocator, "refs/tags/{s}", .{options.ref});
+        defer allocator.free(ref_tag);
+
+        var ref_iterator = try client.listRefs(allocator, uri, .{
+            .ref_prefixes = &.{ options.ref, ref_head, ref_tag },
+            .include_peeled = true,
+        });
+        defer ref_iterator.deinit();
+        while (try ref_iterator.next()) |ref| {
+            if (mem.eql(u8, ref.name, options.ref) or
+                mem.eql(u8, ref.name, ref_head) or
+                mem.eql(u8, ref.name, ref_tag))
+            {
+                break :want_oid ref.peeled orelse ref.oid;
+            }
         }
-        @panic("TODO: discover matching refs from remote");
+        return error.RefNotFound;
     };
 
     var pack_dir = pack_dir: {
@@ -62,7 +79,9 @@ pub fn clone(allocator: mem.Allocator, uri: std.Uri, dir: std.fs.Dir, options: C
         const pack_hash = pack_hash: {
             var pack_file = try pack_dir.createFile("tmp.pack", .{ .read = true });
             defer pack_file.close();
-            var fetch_stream = try client.fetch(allocator, uri, &.{want_oid}, .{
+            var want_oid_buf: [git.fmt_object_name_length]u8 = undefined;
+            _ = std.fmt.bufPrint(&want_oid_buf, "{}", .{std.fmt.fmtSliceHexLower(&want_oid)}) catch unreachable;
+            var fetch_stream = try client.fetch(allocator, uri, &.{&want_oid_buf}, .{
                 .agent = if (supports_agent) protocol.Client.standard_agent else null,
             });
             defer fetch_stream.deinit();
@@ -97,7 +116,7 @@ pub fn clone(allocator: mem.Allocator, uri: std.Uri, dir: std.fs.Dir, options: C
     try index_file.seekTo(0);
     var odb = try Odb.init(pack_file, index_file);
     var repository = Repository{ .odb = odb };
-    try repository.checkout(allocator, dir, try git.parseOid(want_oid));
+    try repository.checkout(allocator, dir, want_oid);
 }
 
 pub fn checkout(repository: *Repository, allocator: mem.Allocator, worktree: std.fs.Dir, commit_oid: Oid) !void {
