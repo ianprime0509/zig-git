@@ -3,6 +3,7 @@ const git = @import("git.zig");
 const pack = @import("pack.zig");
 const protocol = @import("protocol.zig");
 const Odb = @import("Odb.zig");
+const Repository = @import("Repository.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -46,8 +47,13 @@ pub fn main() !void {
     var odb = try Odb.init(pack_file, index_file);
     const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
     //const oid = try git.parseOid("8d7c3b43f6ea0e0f54a74841d9f628d1c9f973df");
-    try odb.seekOid(oid);
-    var object = try odb.readObject(allocator);
-    defer object.deinit(allocator);
-    std.debug.print("{s} {}\n", .{ @tagName(object.type), std.fmt.fmtSliceEscapeUpper(object.data) });
+    // try odb.seekOid(oid);
+    // var object = try odb.readObject(allocator);
+    // defer object.deinit(allocator);
+    // std.debug.print("{s} {}\n", .{ @tagName(object.type), std.fmt.fmtSliceEscapeUpper(object.data) });
+
+    var repository = Repository{ .odb = odb };
+    var worktree = try std.fs.cwd().makeOpenPath("worktree", .{});
+    defer worktree.close();
+    try repository.checkout(allocator, worktree, oid);
 }

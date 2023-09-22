@@ -3,10 +3,11 @@ const mem = std.mem;
 const Sha1 = std.crypto.hash.Sha1;
 
 pub const object_name_length = Sha1.digest_length;
+pub const fmt_object_name_length = 2 * object_name_length;
 pub const Oid = [object_name_length]u8;
 
 pub fn parseOid(s: []const u8) !Oid {
-    if (s.len != object_name_length * 2) return error.InvalidOid;
+    if (s.len != fmt_object_name_length) return error.InvalidOid;
     var oid: Oid = undefined;
     for (&oid, 0..) |*b, i| {
         const high = try parseOidDigit(s[2 * i]);
