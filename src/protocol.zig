@@ -39,8 +39,8 @@ pub const Packet = union(enum) {
         return length;
     }
 
-    pub fn write(self: Packet, writer: anytype) !void {
-        switch (self) {
+    pub fn write(packet: Packet, writer: anytype) !void {
+        switch (packet) {
             .flush => try writer.writeAll("0000"),
             .delimiter => try writer.writeAll("0001"),
             .response_end => try writer.writeAll("0002"),
@@ -65,26 +65,26 @@ pub const Client = struct {
         };
     }
 
-    pub fn deinit(self: *Client) void {
-        self.transport.deinit();
-        self.* = undefined;
+    pub fn deinit(client: *Client) void {
+        client.transport.deinit();
+        client.* = undefined;
     }
 
-    pub fn fetch(self: *Client, git_uri: std.Uri, wants: []const []const u8) !FetchStream {
+    pub fn fetch(client: *Client, git_uri: std.Uri, wants: []const []const u8) !FetchStream {
         var fetch_uri = git_uri;
-        fetch_uri.path = try std.fs.path.resolvePosix(self.allocator, &.{ "/", git_uri.path, "git-upload-pack" });
-        defer self.allocator.free(fetch_uri.path);
+        fetch_uri.path = try std.fs.path.resolvePosix(client.allocator, &.{ "/", git_uri.path, "git-upload-pack" });
+        defer client.allocator.free(fetch_uri.path);
         fetch_uri.query = null;
         fetch_uri.fragment = null;
 
-        var headers = std.http.Headers.init(self.allocator);
+        var headers = std.http.Headers.init(client.allocator);
         defer headers.deinit();
         try headers.append("Content-Type", "application/x-git-upload-pack-request");
         try headers.append("Git-Protocol", "version=2");
 
         var body = std.ArrayListUnmanaged(u8){};
-        defer body.deinit(self.allocator);
-        const body_writer = body.writer(self.allocator);
+        defer body.deinit(client.allocator);
+        const body_writer = body.writer(client.allocator);
         try Packet.write(.{ .data = "command=fetch\n" }, body_writer);
         try Packet.write(.delimiter, body_writer);
         for (wants) |want| {
@@ -95,7 +95,7 @@ pub const Client = struct {
         try Packet.write(.{ .data = "done\n" }, body_writer);
         try Packet.write(.flush, body_writer);
 
-        var request = try self.transport.request(.POST, fetch_uri, headers, .{});
+        var request = try client.transport.request(.POST, fetch_uri, headers, .{});
         errdefer request.deinit();
         request.transfer_encoding = .{ .content_length = body.items.len };
         try request.start();
@@ -133,25 +133,25 @@ pub const Client = struct {
         pos: usize = 0,
         len: usize = 0,
 
-        pub fn deinit(self: *FetchStream) void {
-            self.request.deinit();
+        pub fn deinit(stream: *FetchStream) void {
+            stream.request.deinit();
         }
 
         pub const ReadError = std.http.Client.Request.ReadError || error{ InvalidPacket, UnexpectedPacket };
         pub const Reader = std.io.Reader(*FetchStream, ReadError, read);
 
-        pub fn reader(self: *FetchStream) Reader {
-            return .{ .context = self };
+        pub fn reader(stream: *FetchStream) Reader {
+            return .{ .context = stream };
         }
 
-        pub fn read(self: *FetchStream, buf: []u8) !usize {
-            if (self.pos == self.len) {
+        pub fn read(stream: *FetchStream, buf: []u8) !usize {
+            if (stream.pos == stream.len) {
                 while (true) {
-                    switch (try Packet.read(self.request.reader(), &self.buf)) {
+                    switch (try Packet.read(stream.request.reader(), &stream.buf)) {
                         .flush => return 0,
                         .data => |data| if (data.len > 1 and data[0] == 1) {
-                            self.pos = 1;
-                            self.len = data.len;
+                            stream.pos = 1;
+                            stream.len = data.len;
                             break;
                         },
                         else => return error.UnexpectedPacket,
@@ -159,9 +159,9 @@ pub const Client = struct {
                 }
             }
 
-            const size = @min(buf.len, self.len - self.pos);
-            @memcpy(buf[0..size], self.buf[self.pos .. self.pos + size]);
-            self.pos += size;
+            const size = @min(buf.len, stream.len - stream.pos);
+            @memcpy(buf[0..size], stream.buf[stream.pos .. stream.pos + size]);
+            stream.pos += size;
             return size;
         }
     };

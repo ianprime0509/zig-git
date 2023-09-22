@@ -61,8 +61,8 @@ pub const EntryHeader = union(Type) {
         uncompressed_length: u64,
     };
 
-    pub fn uncompressedLength(self: EntryHeader) u64 {
-        return switch (self) {
+    pub fn uncompressedLength(header: EntryHeader) u64 {
+        return switch (header) {
             inline else => |entry| entry.uncompressed_length,
         };
     }
@@ -419,14 +419,14 @@ fn HashedWriter(
         pub const Error = WriterType.Error;
         pub const Writer = std.io.Writer(*@This(), Error, write);
 
-        pub fn write(self: *@This(), buf: []const u8) Error!usize {
-            const amt = try self.child_writer.write(buf);
-            self.hasher.update(buf);
+        pub fn write(hashed_writer: *@This(), buf: []const u8) Error!usize {
+            const amt = try hashed_writer.child_writer.write(buf);
+            hashed_writer.hasher.update(buf);
             return amt;
         }
 
-        pub fn writer(self: *@This()) Writer {
-            return .{ .context = self };
+        pub fn writer(hashed_writer: *@This()) Writer {
+            return .{ .context = hashed_writer };
         }
     };
 }

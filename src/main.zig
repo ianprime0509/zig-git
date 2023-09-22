@@ -2,7 +2,7 @@ const std = @import("std");
 const git = @import("git.zig");
 const pack = @import("pack.zig");
 const protocol = @import("protocol.zig");
-const Odb = @import("odb.zig").Odb;
+const Odb = @import("Odb.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -43,9 +43,9 @@ pub fn main() !void {
     defer pack_file.close();
     var index_file = try std.fs.cwd().openFile("xml.idx", .{});
     defer index_file.close();
-    var odb = try Odb(std.fs.File).init(pack_file, index_file);
-    //const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
-    const oid = try git.parseOid("8d7c3b43f6ea0e0f54a74841d9f628d1c9f973df");
+    var odb = try Odb.init(pack_file, index_file);
+    const oid = try git.parseOid("dfdc044f3271641c7d428dc8ec8cd46423d8b8b6");
+    //const oid = try git.parseOid("8d7c3b43f6ea0e0f54a74841d9f628d1c9f973df");
     try odb.seekOid(oid);
     var object = try odb.readObject(allocator);
     defer object.deinit(allocator);
